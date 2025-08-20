@@ -1,0 +1,340 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-py"
+  output   = "../src/models/"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// User model for authentication and authorization
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  name              String?
+  image             String?
+  role              UserRole @default(USER)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Facebook OAuth data
+  facebookId        String?  @unique
+  facebookToken     String?  // Encrypted
+  facebookTokenExpiry DateTime?
+  
+  // Relations
+  facebookPages     FacebookPage[]
+  whatsappNumbers   WhatsappNumber[]
+  leads             Lead[]
+  campaigns         Campaign[]
+  auditLogs         AuditLog[]
+  
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// Facebook Page model
+model FacebookPage {
+  id                String   @id @default(cuid())
+  facebookPageId    String   @unique
+  name              String
+  accessToken       String   // Encrypted
+  tokenExpiry       DateTime?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  posts             FacebookPost[]
+  leads             Lead[]
+  
+  @@map("facebook_pages")
+}
+
+// Facebook Post model
+model FacebookPost {
+  id                String   @id @default(cuid())
+  facebookPostId    String   @unique
+  message           String?
+  story             String?
+  createdTime       DateTime
+  likesCount        Int      @default(0)
+  commentsCount     Int      @default(0)
+  sharesCount       Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  facebookPageId    String
+  facebookPage      FacebookPage @relation(fields: [facebookPageId], references: [id], onDelete: Cascade)
+  
+  @@map("facebook_posts")
+}
+
+// WhatsApp Number model
+model WhatsappNumber {
+  id                String   @id @default(cuid())
+  phoneNumber       String   @unique
+  displayName       String?
+  businessAccountId String
+  accessToken       String   // Encrypted
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templates         WhatsappTemplate[]
+  messages          Message[]
+  
+  @@map("whatsapp_numbers")
+}
+
+// WhatsApp Template model
+model WhatsappTemplate {
+  id                String   @id @default(cuid())
+  name              String
+  language          String
+  status            String
+  category          String
+  components        Json     // Store template components as JSON
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  whatsappNumberId  String
+  whatsappNumber    WhatsappNumber @relation(fields: [whatsappNumberId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  
+  @@unique([whatsappNumberId, name])
+  @@map("whatsapp_templates")
+}
+
+// Lead model
+model Lead {
+  id                String   @id @default(cuid())
+  firstName         String?
+  lastName          String?
+  email             String?
+  phoneNumber       String?
+  facebookUserId    String?
+  source            LeadSource
+  status            LeadStatus @default(NEW)
+  consentGiven      Boolean  @default(false)
+  consentTimestamp  DateTime?
+  consentType       ConsentType?
+  lastInteraction   DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facebookPageId    String?
+  facebookPage      FacebookPage? @relation(fields: [facebookPageId], references: [id], onDelete: SetNull)
+  tags              LeadTag[]
+  messages          Message[]
+  
+  @@map("leads")
+}
+
+enum LeadSource {
+  FACEBOOK_COMMENT
+  FACEBOOK_LIKE
+  FACEBOOK_MESSAGE
+  FACEBOOK_LEAD_AD
+  WEB_FORM
+  WHATSAPP
+  MANUAL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  UNSUBSCRIBED
+}
+
+enum ConsentType {
+  EXPLICIT_OPTIN
+  FACEBOOK_MESSAGE
+  WEB_FORM_SUBMISSION
+  LEAD_AD_SUBMISSION
+}
+
+// Tag model for lead segmentation
+model Tag {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  color             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  leads             LeadTag[]
+  
+  @@map("tags")
+}
+
+// Many-to-many relation between Lead and Tag
+model LeadTag {
+  leadId            String
+  tagId             String
+  createdAt         DateTime @default(now())
+  
+  lead              Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag               Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  
+  @@id([leadId, tagId])
+  @@map("lead_tags")
+}
+
+// Message model for tracking sent messages
+model Message {
+  id                String   @id @default(cuid())
+  type              MessageType
+  platform          MessagePlatform
+  recipient         String   // Phone number or Facebook user ID
+  content           String
+  status            MessageStatus @default(PENDING)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  errorMessage      String?
+  retryCount        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  leadId            String?
+  lead              Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  campaignId        String?
+  campaign          Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  whatsappNumberId  String?
+  whatsappNumber    WhatsappNumber? @relation(fields: [whatsappNumberId], references: [id], onDelete: SetNull)
+  whatsappTemplateId String?
+  whatsappTemplate  WhatsappTemplate? @relation(fields: [whatsappTemplateId], references: [id], onDelete: SetNull)
+  
+  @@map("messages")
+}
+
+enum MessageType {
+  TEXT
+  TEMPLATE
+  MEDIA
+}
+
+enum MessagePlatform {
+  WHATSAPP
+  MESSENGER
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// Campaign model for message campaigns
+model Campaign {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  type              CampaignType
+  status            CampaignStatus @default(DRAFT)
+  scheduledAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  targetAudience    Json     // Store audience criteria as JSON
+  messageTemplate   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  
+  @@map("campaigns")
+}
+
+enum CampaignType {
+  WHATSAPP_TEMPLATE
+  MESSENGER_BROADCAST
+  FOLLOW_UP
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+// Audit Log model for compliance and tracking
+model AuditLog {
+  id                String   @id @default(cuid())
+  action            String
+  resource          String
+  resourceId        String?
+  details           Json?
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime @default(now())
+  
+  // Relations
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@map("audit_logs")
+}
+
+// API Key model for external integrations
+model ApiKey {
+  id                String   @id @default(cuid())
+  name              String
+  keyHash           String   @unique // Hashed API key
+  permissions       Json     // Store permissions as JSON array
+  isActive          Boolean  @default(true)
+  lastUsedAt        DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@map("api_keys")
+}
+
+// Rate Limit model for API rate limiting
+model RateLimit {
+  id                String   @id @default(cuid())
+  identifier        String   // User ID, API key, or IP address
+  endpoint          String
+  requestCount      Int      @default(0)
+  windowStart       DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@unique([identifier, endpoint, windowStart])
+  @@map("rate_limits")
+}
+
